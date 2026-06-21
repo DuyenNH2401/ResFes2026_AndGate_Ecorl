@@ -106,3 +106,97 @@ def test_split_reward_for_step_tuple_and_scalar():
     assert rt == 2.7
     assert cs == 0.0 and cc == 0.0 and cr == 0.0
 
+
+# ---------------------------------------------------------------------------
+#  Task 4 — Lagrangian dual update
+# ---------------------------------------------------------------------------
+from ppg.core import PPGAgent  # noqa: E402
+
+
+def _make_lagrangian_agent():
+    """Agent tối giản, KHÔNG dựng network thật — chỉ test logic λ."""
+    agent = PPGAgent.__new__(PPGAgent)
+    agent.lagrangian_enabled = True
+    agent.lambda_safety = 1.0
+    agent.lambda_comfort = 0.1
+    agent.lambda_redlight = 25.0
+    agent.lambda_lr = 0.1
+    agent.cost_limit_safety = 0.02
+    agent.cost_limit_comfort = 0.30
+    agent.cost_limit_redlight = 0.0
+    agent.lambda_max = 50.0
+    return agent
+
+
+def test_update_lambdas_moves_correct_direction():
+    agent = _make_lagrangian_agent()
+    # cost_safety mean=0.5 >> limit 0.02 → λ_safety TĂNG
+    # cost_comfort mean=0.0 < limit 0.30 → λ_comfort GIẢM
+    # cost_redlight mean=0.1 > limit 0.0 → λ_redlight TĂNG
+    out = agent.update_lambdas(mean_cost_safety=0.5, mean_cost_comfort=0.0,
+                               mean_cost_redlight=0.1)
+    assert out["lambda_safety"] > 1.0
+    assert out["lambda_comfort"] < 0.1
+    assert out["lambda_comfort"] >= 0.0     # luôn không âm
+    assert out["lambda_redlight"] > 25.0
+
+
+def test_update_lambdas_clamps_at_zero_and_max():
+    agent = _make_lagrangian_agent()
+    agent.lambda_comfort = 0.001
+    agent.lambda_lr = 1.0
+    # cost rất thấp → λ_comfort muốn âm nhưng phải clamp tại 0
+    out = agent.update_lambdas(mean_cost_safety=0.0, mean_cost_comfort=0.0,
+                               mean_cost_redlight=0.0)
+    assert out["lambda_comfort"] == 0.0
+    # cost rất cao → λ_safety đụng trần lambda_max
+    agent.lambda_safety = 49.9
+    out = agent.update_lambdas(mean_cost_safety=1000.0, mean_cost_comfort=0.0,
+                               mean_cost_redlight=0.0)
+    assert out["lambda_safety"] == 50.0
+
+
+def test_compute_gae_subtracts_effective_cost():
+    """compute_gae trừ λ·cost khi lagrangian bật (dùng λ hiện tại của rollout)."""
+    agent = PPGAgent.__new__(PPGAgent)
+    agent.lagrangian_enabled = True
+    agent.lambda_safety = 2.0
+    agent.lambda_comfort = 1.0
+    agent.lambda_redlight = 10.0
+    agent.gamma = 0.99
+    agent.lam = 0.95
+
+    class _Mem:
+        rewards = [1.0, 1.0, 1.0]
+        dones = [0.0, 0.0, 1.0]
+        value_vals = [0.0, 0.0, 0.0]
+        cost_safety = [0.5, 0.0, 0.0]
+        cost_comfort = [0.0, 0.5, 0.0]
+        cost_redlight = [0.0, 0.0, 0.1]
+    agent.policy_memory = _Mem()
+
+    adv, ret = agent.compute_gae(0.0)
+    # r_eff[0] = 1 - 2*0.5 = 0 ; r_eff[1] = 1 - 1*0.5 = 0.5 ; r_eff[2] = 1 - 10*0.1 = 0
+    assert adv.shape == (3,)
+    assert ret.shape == (3,)
+
+
+def test_compute_gae_no_subtract_when_disabled():
+    agent = PPGAgent.__new__(PPGAgent)
+    agent.lagrangian_enabled = False
+    agent.gamma = 0.99
+    agent.lam = 0.95
+
+    class _Mem:
+        rewards = [1.0, 1.0]
+        dones = [0.0, 1.0]
+        value_vals = [0.0, 0.0]
+        cost_safety = [9.0, 9.0]
+        cost_comfort = [9.0, 9.0]
+        cost_redlight = [9.0, 9.0]
+    agent.policy_memory = _Mem()
+    adv, ret = agent.compute_gae(0.0)
+    # returns không bị ảnh hưởng bởi cost khi tắt → return[1] = reward[1] = 1.0
+    assert abs(ret[1] - 1.0) < 1e-6
+
+

@@ -27,10 +27,12 @@ def _install_fake_traci():
     traci.close = lambda *a, **k: None
     traci.start = lambda *a, **k: None
 
-    # traci.constants — chỉ cần là module rỗng, env.py dùng tc.CONST khi chạy thật
+    # traci.constants — module rỗng có __file__ hợp lệ để torch/inspect không lỗi.
     constants = types.ModuleType("traci.constants")
+    constants.__file__ = os.path.join(os.path.dirname(__file__), "_fake_traci_constants.py")
     constants.__getattr__ = lambda name: 0  # bất kỳ hằng nào → 0
     traci.constants = constants
+    traci.__file__ = os.path.join(os.path.dirname(__file__), "_fake_traci.py")
 
     sys.modules["traci"] = traci
     sys.modules["traci.constants"] = constants
