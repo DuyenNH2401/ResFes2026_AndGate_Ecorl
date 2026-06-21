@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**ResFes2026_AndGate_Ecorl** — Reinforcement learning for adaptive traffic signal control and autonomous eco-driving in SUMO. Uses **Phasic Policy Gradient (PPG)** with a pluggable backbone architecture (DNN, LSTM, biLSTM, GRU, RNN, Mamba) to train agents that navigate 3×3 grid intersections with intelligent traffic lights.
+**ResFes2026_AndGate_Ecorl** — Reinforcement learning for adaptive traffic signal control and autonomous eco-driving in SUMO. Uses **Phasic Policy Gradient (PPG)** with a pluggable backbone architecture. The backbone interface (`BaseBackbone` + `BACKBONE_REGISTRY` + `create_backbone()`) is in place, but **only the Mamba SSM backbone is currently implemented/registered** (`backbones/mamba.py`). DNN/LSTM/biLSTM/GRU/RNN are roadmap items — not yet written. Agents navigate 3×3 grid intersections with intelligent traffic lights.
 
 ## Critical Setup
 
@@ -12,13 +12,13 @@ Requires `SUMO_HOME` environment variable set to a SUMO (Simulation of Urban MOb
 
 No `requirements.txt` or `setup.py` exists. Key dependencies: `torch`, `numpy`, `gymnasium`, `traci` (from SUMO), `pyyaml`.
 
-## Missing Files (expected by current code)
+## Backbone Status
 
-The following files are imported but do **not** exist in the repo yet:
-- `backbones/__init__.py` — expected to export `BACKBONE_REGISTRY` (dict) and `create_backbone()` (factory function)
-- `backbones/base.py` — expected to export `BaseBackbone` (base class imported by `mamba.py`)
+The backbone interface exists and works:
+- `backbones/__init__.py` — exports `BACKBONE_REGISTRY` (dict) and `create_backbone()` (factory).
+- `backbones/base.py` — exports `BaseBackbone` (base class used by `mamba.py`).
 
-These must be created for the project to run. The `BACKBONE_REGISTRY` keys used in CLI: `dnn`, `lstm`, `bilstm`, `gru`, `rnn`, `mamba`.
+**Only `mamba` is registered** in `BACKBONE_REGISTRY`. The CLI `--backbone` choices are derived from the registry, so currently only `--backbone mamba` is valid. Adding DNN/LSTM/biLSTM/GRU/RNN requires writing the corresponding files and registering them.
 
 ## Project Architecture
 
@@ -47,9 +47,9 @@ ecorl_adaptive_shaping/
 
 **Phase 1 (Policy Phase):** Standard PPO with dual critics. `PolicyModel` has a shared backbone with Actor + Auxiliary Critic heads. `ValueModel` has its own independent backbone + critic head. PPO clipped surrogate objective with separate networks.
 
-**Phase 2 (Auxiliary Phase):** Triggered every `N_aux` policy updates. Joint loss: (1) value distillation from separate Value Network to Policy Network's auxiliary critic, (2) direct return regression, (3) KL divergence constraint to prevent policy drift from old parameters stored in `AuxiliaryBuffer`.
+**Phase 2 (Auxiliary Phase):** Triggered every `N_aux` policy updates. Joint loss: (1) value distillation from separate Value Network to Policy Network's auxiliary critic, (2) direct return regression, (3) **adaptive KL** divergence constraint (coefficient `β` weighted, `self.beta_kl * l_kl`) to prevent policy drift from old parameters stored in `AuxiliaryBuffer`. After each auxiliary phase, the measured mean KL adapts `β` toward target `d_targ`: `kl > d_targ·1.5 → β×2`; `kl < d_targ/1.5 → β÷2`; clamped to `[beta_kl_min, beta_kl_max]`.
 
-Key PPG parameters: `n_aux=5`, `k_aux=10`, `beta_kl=5.0`, `d_targ=0.03`, `clip_val=10.0`.
+Key PPG parameters: `n_aux=5`, `k_aux=10`, `beta_kl=5.0` (initial, adaptive), `d_targ=0.03` (KL target), `clip_val=10.0`.
 
 ## Observation & Action Space
 
@@ -78,21 +78,22 @@ The action planner (`_apply_action_planner`) overrides agent actions using **RSS
 ## Key Commands
 
 ```bash
-# Train with different backbones
-python train_ppg.py --backbone dnn
-python train_ppg.py --backbone lstm
+# Train (only mamba is currently registered)
 python train_ppg.py --backbone mamba
-python train_ppg.py --backbone bilstm --hidden-size 256 --num-layers 3
+python train_ppg.py --backbone mamba --hidden-size 256 --num-layers 3
 
 # Train with config file
-python train_ppg.py --config configs/ppg_default.yaml --backbone lstm
+python train_ppg.py --config configs/ppg_default.yaml --backbone mamba
+
+# Train with adaptive reward arms
+python train_ppg.py --backbone mamba --lagrangian-enabled true     # Lagrangian constrained shaping
+python train_ppg.py --backbone mamba --curriculum-enabled true     # curriculum energy weighting
 
 # Test/evaluate a trained model
-python test_ppg.py --backbone lstm -m LSTM_PPG/runs/<run_id>/models/LSTM_PPG_best
 python test_ppg.py --backbone mamba -m Mamba_PPG/runs/<run_id>/models/Mamba_PPG_best --no-gui
 
 # Test specific map/route
-python test_ppg.py --backbone dnn -m DNN_PPG/models/DNN_PPG_best -map maps/grid_3_3_intelligent_tls_1800/run.sumocfg
+python test_ppg.py --backbone mamba -m Mamba_PPG/models/Mamba_PPG_best -map maps/grid_3_3_intelligent_tls_1800/run.sumocfg
 ```
 
 Output goes to `{BACKBONE}_PPG/runs/{exp_name}_seed{seed}_{timestamp}/` with:

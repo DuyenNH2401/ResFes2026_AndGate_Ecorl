@@ -35,6 +35,7 @@ training:
   n_episode: 5000
   n_saved: 100
   render: "false"
+  seed: 55
 
 # Adaptive Reward (mặc định TẮT — chạy baseline reward gốc)
 adaptive_reward:
