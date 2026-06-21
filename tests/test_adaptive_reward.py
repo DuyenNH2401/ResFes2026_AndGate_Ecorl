@@ -93,3 +93,16 @@ def test_scalar_equals_original_formula():
     expected = _scalar_from_components(env2, action)
 
     assert abs(scalar - expected) < 1e-9
+
+
+def test_split_reward_for_step_tuple_and_scalar():
+    """_split_reward_for_step chuẩn hoá output về (reward_task, cs, cc, cr)."""
+    env = _make_stub_env(adaptive=True)
+    # tuple-4 (adaptive) → giữ nguyên
+    rt, cs, cc, cr = env._split_reward_for_step((1.5, 0.3, 0.2, 0.1))
+    assert (rt, cs, cc, cr) == (1.5, 0.3, 0.2, 0.1)
+    # scalar (baseline) → cost = 0
+    rt, cs, cc, cr = env._split_reward_for_step(2.7)
+    assert rt == 2.7
+    assert cs == 0.0 and cc == 0.0 and cr == 0.0
+

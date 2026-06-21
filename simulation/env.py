@@ -984,6 +984,16 @@ class SumoEnv(gym.Env):
             + (red_light_penalty * W_RED_LIGHT)
         )
 
+    def _split_reward_for_step(self, reward_out):
+        """Chuẩn hoá output của _calculate_reward về
+        (reward_task, cost_safety, cost_comfort, cost_redlight).
+        Khi adaptive tắt, reward_out là scalar → các cost = 0."""
+        if isinstance(reward_out, tuple):
+            reward_task, cost_safety, cost_comfort, cost_redlight = reward_out
+            return (float(reward_task), float(cost_safety),
+                    float(cost_comfort), float(cost_redlight))
+        return float(reward_out), 0.0, 0.0, 0.0
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed, options=options)
 
@@ -1422,6 +1432,10 @@ class SumoEnv(gym.Env):
         sum_speed          = 0.0
         valid_steps        = 0
         termination_reason = "running"
+        # Tích luỹ cost Lagrangian qua các SIM_STEPS (dùng cho info dict)
+        _step_cs = 0.0
+        _step_cc = 0.0
+        _step_cr = 0.0
 
         for _ in range(SIM_STEPS):
             traci.simulationStep()
@@ -1482,7 +1496,13 @@ class SumoEnv(gym.Env):
             e = max(0.0, self.veh_data["elec"])
             accumulated_energy += e if not np.isnan(e) else 0.0
 
-            reward += self._calculate_reward(planned_action) / SIM_STEPS
+            _rew_out = self._calculate_reward(planned_action)
+            _r_task, _c_safety, _c_comfort, _c_redlight = self._split_reward_for_step(_rew_out)
+            reward += _r_task / SIM_STEPS
+            # Cộng dồn cost qua các SIM_STEPS (SIM_STEPS=1 hiện tại → tương đương gán)
+            _step_cs += _c_safety
+            _step_cc += _c_comfort
+            _step_cr += _c_redlight
 
             if self._success_check():
                 terminated = True
@@ -1532,6 +1552,11 @@ class SumoEnv(gym.Env):
             "route":       route_info,
             "override_rate": override_rate,
             "avg_jerk":    avg_jerk,
+            # Cost Lagrangian (chỉ có ý nghĩa khi adaptive_reward_enabled=True;
+            # khi tắt luôn = 0 do _split_reward_for_step trả 0)
+            "cost_safety":   _step_cs,
+            "cost_comfort":  _step_cc,
+            "cost_redlight": _step_cr,
         }
 
         return obs, reward, terminated, truncated, info
