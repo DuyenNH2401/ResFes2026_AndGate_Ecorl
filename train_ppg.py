@@ -94,6 +94,8 @@ Examples:
     parser.add_argument("--k-aux", type=int, default=None, help="Auxiliary update epochs (default: loads from ppg_config.py)")
     parser.add_argument("--beta-kl", type=float, default=None, help="Target KL penalty coefficient (default: loads from ppg_config.py)")
     parser.add_argument("--d-targ", type=float, default=None, help="Target KL divergence value (default: loads from ppg_config.py)")
+    parser.add_argument("--beta-kl-min", type=float, default=None, help="Chặn dưới β adaptive KL (default: loads from ppg_config.py)")
+    parser.add_argument("--beta-kl-max", type=float, default=None, help="Chặn trên β adaptive KL (default: loads from ppg_config.py)")
     parser.add_argument("--clip-val", type=float, default=None, help="Value clipping range in PPG (default: loads from ppg_config.py)")
     parser.add_argument("--clip-eps", type=float, default=None, help="Policy clipping range in PPG (default: loads from ppg_config.py)")
 
@@ -286,6 +288,8 @@ def train(args):
         k_aux=args.k_aux,
         beta_kl=args.beta_kl,
         d_targ=args.d_targ,
+        beta_kl_min=args.beta_kl_min,
+        beta_kl_max=args.beta_kl_max,
         clip_val=args.clip_val,
         clip_eps=args.clip_eps,
         # Adaptive reward — Lagrangian
@@ -402,7 +406,9 @@ def train(args):
                               f"λ_r={lam_info['lambda_redlight']:.4f}"
                               f"(c={lam_info['mean_cost_redlight']:.4f})")
                     if update_results and update_results.get("aux_executed"):
-                        print(f"  [AUX PHASE] Executed auxiliary phase update. Loss: {update_results['aux_loss']:.4f}")
+                        print(f"  [AUX PHASE] Loss: {update_results['aux_loss']:.4f} | "
+                              f"KL: {update_results.get('aux_mean_kl', 0.0):.4f} | "
+                              f"β_kl: {update_results.get('beta_kl', 0.0):.3f}")
 
                 if done:
                     break

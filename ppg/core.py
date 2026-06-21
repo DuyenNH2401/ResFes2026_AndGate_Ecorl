@@ -151,6 +151,7 @@ class PPGAgent:
                  # PPG-specific hyperparameters
                  lr_policy=None, lr_value=None,
                  beta_kl=None, d_targ=None,
+                 beta_kl_min=None, beta_kl_max=None, kl_adapt_thresh=None,
                  n_aux=None, k_aux=None, clip_val=None, clip_eps=None,
                  # Lagrangian adaptive weighting
                  lagrangian_enabled=None, lambda_safety_init=None,
@@ -180,6 +181,10 @@ class PPGAgent:
         # PPG-specific configurations
         self.beta_kl = beta_kl if beta_kl is not None else ppg_config.BETA_KL
         self.d_targ = d_targ if d_targ is not None else ppg_config.D_TARG
+        # Adaptive KL: β tự điều chỉnh quanh d_targ, clamp trong [min, max]
+        self.beta_kl_min = beta_kl_min if beta_kl_min is not None else getattr(ppg_config, 'BETA_KL_MIN', 0.5)
+        self.beta_kl_max = beta_kl_max if beta_kl_max is not None else getattr(ppg_config, 'BETA_KL_MAX', 100.0)
+        self.kl_adapt_thresh = kl_adapt_thresh if kl_adapt_thresh is not None else getattr(ppg_config, 'KL_ADAPT_THRESH', 1.5)
         self.N_aux = n_aux if n_aux is not None else ppg_config.N_AUX
         self.K_aux = k_aux if k_aux is not None else ppg_config.K_AUX
         self.clip_val = clip_val if clip_val is not None else ppg_config.CLIP_VAL
@@ -510,10 +515,24 @@ class PPGAgent:
             "entropy": np.mean(entropy_losses),
             "aux_executed": aux_executed,
             "aux_loss": aux_loss_val,
+            "aux_mean_kl": getattr(self, "_last_aux_mean_kl", 0.0) if aux_executed else 0.0,
+            "beta_kl": self.beta_kl,
             "mean_cost_safety": mean_cost_safety,
             "mean_cost_comfort": mean_cost_comfort,
             "mean_cost_redlight": mean_cost_redlight,
         }
+
+    @staticmethod
+    def _adapt_beta_kl(mean_kl, beta, d_targ, thresh, lo, hi):
+        """Điều chỉnh hệ số phạt KL theo PPO/PPG adaptive-KL.
+
+        kl > d_targ·thresh → β×2 (siết); kl < d_targ/thresh → β÷2 (nới);
+        clamp [lo, hi]. Trả về β mới."""
+        if mean_kl > d_targ * thresh:
+            beta = beta * 2.0
+        elif mean_kl < d_targ / thresh:
+            beta = beta / 2.0
+        return float(min(max(beta, lo), hi))
 
     def update_auxiliary_phase(self):
         """
@@ -530,6 +549,7 @@ class PPGAgent:
 
         N = states_t.size(0)
         aux_losses = []
+        kl_vals = []
 
         # Auxiliary optimization loops
         for epoch in range(self.K_aux):
@@ -562,8 +582,8 @@ class PPGAgent:
                 old_dist = Normal(b_old_means, b_old_stds)
                 l_kl = kl_divergence(old_dist, dist).sum(dim=-1).mean()
 
-                # Joint Auxiliary loss
-                loss_aux = self.vf_loss_coef * (l_distill + l_value_buf) + 1.0 * l_kl
+                # Joint Auxiliary loss (β tự điều chỉnh — adaptive KL)
+                loss_aux = self.vf_loss_coef * (l_distill + l_value_buf) + self.beta_kl * l_kl
 
                 # Update Policy Network parameters (backbone and auxiliary critic)
                 self.policy_optimizer.zero_grad()
@@ -572,10 +592,18 @@ class PPGAgent:
                 self.policy_optimizer.step()
 
                 aux_losses.append(loss_aux.item())
+                kl_vals.append(l_kl.item())
+
+        # Adaptive KL: điều chỉnh β cho lần auxiliary phase kế tiếp dựa trên KL thực đo
+        mean_kl = float(np.mean(kl_vals)) if kl_vals else 0.0
+        self.beta_kl = self._adapt_beta_kl(
+            mean_kl, self.beta_kl, self.d_targ,
+            self.kl_adapt_thresh, self.beta_kl_min, self.beta_kl_max)
 
         self.aux_buffer.clear()
         self.t_aux = 0
 
+        self._last_aux_mean_kl = mean_kl
         return np.mean(aux_losses)
 
     def save_weights(self, path_prefix='PPG'):

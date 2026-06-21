@@ -17,8 +17,11 @@ LR_VALUE = 1e-3
 # PPG Auxiliary Phase Hyperparameters
 N_AUX = 5             # Auxiliary update after this many policy updates
 K_AUX = 10            # Number of epochs for auxiliary update (K_aux)
-BETA_KL = 5.0         # Adaptive/target KL penalty coefficient
-D_TARG = 0.03         # Target KL divergence
+BETA_KL = 5.0         # Adaptive KL penalty coefficient (β khởi tạo, tự điều chỉnh)
+D_TARG = 0.03         # Target KL divergence (mục tiêu để adapt β)
+BETA_KL_MIN = 0.5     # chặn dưới β
+BETA_KL_MAX = 100.0   # chặn trên β
+KL_ADAPT_THRESH = 1.5 # ngưỡng nhân/chia: kl>d_targ*thresh→β×2; kl<d_targ/thresh→β÷2
 CLIP_VAL = 10.0       # Value function clip range for separate value network
 CLIP_EPS = 0.2        # PPO policy clipping epsilon
 
