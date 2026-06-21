@@ -1,18 +1,12 @@
 """
-Unified PPG Training Script — Multi-Backbone
-=============================================
-Train PPG with any backbone via CLI argument:
+PPG-Mamba Training Script
+=========================
+Train PPG with the Mamba backbone:
 
-    python train_ppg.py --backbone dnn
-    python train_ppg.py --backbone lstm
     python train_ppg.py --backbone mamba
-    python train_ppg.py --backbone bilstm --hidden-size 256 --num-layers 3
 
-Output automatically goes to {BACKBONE}_PPG/ folder:
-    DNN_PPG/models/    DNN_PPG/reports/
-    LSTM_PPG/models/   LSTM_PPG/reports/
-    Mamba_PPG/models/  Mamba_PPG/reports/
-    ...
+Output automatically goes to the Mamba_PPG/ folder:
+    Mamba_PPG/runs/<run_id>/models/
 """
 
 import os
@@ -59,12 +53,12 @@ def set_seed(seed=55):
 # ============================================================
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Unified PPG training with selectable backbone architecture.",
+        description="PPG training with the Mamba backbone.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python train_ppg.py --backbone dnn
-  python train_ppg.py --config ppg_config.yaml --backbone lstm
+  python train_ppg.py --backbone mamba
+  python train_ppg.py --config configs/ppg_default.yaml --backbone mamba
         """
     )
 
@@ -99,11 +93,8 @@ Examples:
     parser.add_argument("--clip-val", type=float, default=None, help="Value clipping range in PPG (default: loads from ppg_config.py)")
     parser.add_argument("--clip-eps", type=float, default=None, help="Policy clipping range in PPG (default: loads from ppg_config.py)")
 
-    # Backbone hyperparameters (shared)
+    # Backbone hyperparameters (Mamba)
     parser.add_argument("--d-model", type=int, default=128, help="Feature dimension (default: 128)")
-    parser.add_argument("--hidden-size", type=int, default=128, help="RNN/GRU/LSTM hidden size (default: 128)")
-    parser.add_argument("--hidden-sizes", type=int, nargs="+", default=[256, 256], help="DNN hidden layer sizes (default: 256 256)")
-    parser.add_argument("--num-layers", type=int, default=2, help="Number of layers (default: 2)")
     parser.add_argument("--seq-len", type=int, default=5, help="Sequence length for reshaping (default: 5)")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate (default: 0.1)")
 
@@ -147,24 +138,15 @@ Examples:
 
 
 def get_backbone_kwargs(args):
-    """Build backbone-specific kwargs from CLI args."""
-    name = args.backbone.lower()
-    kwargs = {"dropout": args.dropout}
-
-    if name == "dnn":
-        kwargs["hidden_sizes"] = args.hidden_sizes
-    elif name in ("rnn", "gru", "lstm", "bilstm"):
-        kwargs["hidden_size"] = args.hidden_size
-        kwargs["num_layers"] = args.num_layers
-        kwargs["seq_len"] = args.seq_len
-    elif name == "mamba":
-        kwargs["d_model"] = args.d_model
-        kwargs["n_layers"] = args.n_layers
-        kwargs["d_state"] = args.d_state
-        kwargs["d_conv"] = args.d_conv
-        kwargs["seq_len"] = args.seq_len
-
-    return kwargs
+    """Build Mamba backbone kwargs from CLI args."""
+    return {
+        "dropout": args.dropout,
+        "d_model": args.d_model,
+        "n_layers": args.n_layers,
+        "d_state": args.d_state,
+        "d_conv": args.d_conv,
+        "seq_len": args.seq_len,
+    }
 
 
 # ============================================================
@@ -204,10 +186,7 @@ def log_episode(filepath, row):
 def train(args):
     set_seed(args.seed)
     backbone_name = args.backbone.lower()
-    backbone_upper = {
-        "dnn": "DNN", "rnn": "RNN", "gru": "GRU",
-        "lstm": "LSTM", "bilstm": "biLSTM", "mamba": "Mamba",
-    }[backbone_name]
+    backbone_upper = "Mamba"
 
     timestamp = dt.datetime.now().strftime('%d%m%Y_%H%M%S')
     exp_name = args.exp_name

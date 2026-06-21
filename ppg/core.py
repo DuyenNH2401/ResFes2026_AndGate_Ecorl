@@ -183,7 +183,8 @@ class PPGAgent:
         # Setup history sequential wrapping matching PPO Agent
         self.history = []
         if use_history is None or use_history == "auto":
-            self.is_sequential = backbone_name.lower() in ("lstm", "gru", "rnn", "bilstm")
+            # Mamba consumes flat state vectors; no rolling history in auto mode.
+            self.is_sequential = False
         else:
             if isinstance(use_history, str):
                 self.is_sequential = use_history.lower() == "true"

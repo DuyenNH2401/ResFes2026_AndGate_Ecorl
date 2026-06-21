@@ -21,12 +21,9 @@ ppg:
   clip_eps: 0.2
 
 
-# Backbone Hyperparameters
+# Backbone Hyperparameters (Mamba)
 backbone:
   d_model: 128
-  hidden_size: 128
-  hidden_sizes: [256, 256]
-  num_layers: 2
   seq_len: 5
   dropout: 0.1
   d_state: 16

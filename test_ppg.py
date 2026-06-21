@@ -1,11 +1,9 @@
 """
-Unified PPG Test Script — Multi-Backbone
-==========================================
-Test PPG models with any backbone on ALL routes:
+PPG-Mamba Test Script
+=====================
+Test PPG-Mamba models on ALL routes:
 
-    python test_ppg.py --backbone lstm -m LSTM_PPG/models/.../LSTM_PPG_best
     python test_ppg.py --backbone mamba -m Mamba_PPG/models/.../Mamba_PPG_best
-    python test_ppg.py --backbone dnn -m DNN_PPG/models/.../DNN_PPG_best --no-gui
 
 Based on test_ppo.py but adapted for PPGAgent.
 """
@@ -218,7 +216,6 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python test_ppg.py --backbone lstm -m LSTM_PPG/models/.../LSTM_PPG_best
   python test_ppg.py --backbone mamba -m Mamba_PPG/models/.../Mamba_PPG_best --no-gui
         """
     )
@@ -233,9 +230,6 @@ Examples:
 
     # Backbone hyperparams (must match training)
     parser.add_argument("--d-model", type=int, default=128)
-    parser.add_argument("--hidden-size", type=int, default=128)
-    parser.add_argument("--hidden-sizes", type=int, nargs="+", default=[256, 256])
-    parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--seq-len", type=int, default=5)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--d-state", type=int, default=16)
@@ -283,21 +277,14 @@ Examples:
 
 
 def get_backbone_kwargs(args):
-    name = args.backbone.lower()
-    kwargs = {"dropout": args.dropout}
-    if name == "dnn":
-        kwargs["hidden_sizes"] = args.hidden_sizes
-    elif name in ("rnn", "gru", "lstm", "bilstm"):
-        kwargs["hidden_size"] = args.hidden_size
-        kwargs["num_layers"] = args.num_layers
-        kwargs["seq_len"] = args.seq_len
-    elif name == "mamba":
-        kwargs["d_model"] = args.d_model
-        kwargs["n_layers"] = args.n_layers
-        kwargs["d_state"] = args.d_state
-        kwargs["d_conv"] = args.d_conv
-        kwargs["seq_len"] = args.seq_len
-    return kwargs
+    return {
+        "dropout": args.dropout,
+        "d_model": args.d_model,
+        "n_layers": args.n_layers,
+        "d_state": args.d_state,
+        "d_conv": args.d_conv,
+        "seq_len": args.seq_len,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -305,10 +292,7 @@ def get_backbone_kwargs(args):
 # ═══════════════════════════════════════════════════════════════════════════════
 def run_test(args):
     backbone_name = args.backbone.lower()
-    backbone_upper = {
-        "dnn": "DNN", "rnn": "RNN", "gru": "GRU",
-        "lstm": "LSTM", "bilstm": "biLSTM", "mamba": "Mamba",
-    }[backbone_name]
+    backbone_upper = "Mamba"
 
     render = not args.no_gui
     routes = parse_routes_from_xml(args.route_file)
