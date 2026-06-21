@@ -34,7 +34,8 @@ MAP_CONFIGS = [
 
 CSV_HEADER = [
     "episode", "steps", "ep_reward", "avg_speed", "total_energy",
-    "wiggle", "safety", "success", "reason", "route", "override_rate", "avg_jerk"
+    "wiggle", "safety", "success", "reason", "route", "override_rate", "avg_jerk",
+    "lambda_safety", "lambda_comfort", "lambda_redlight"
 ]
 
 
@@ -92,6 +93,23 @@ Examples:
     parser.add_argument("--d-targ", type=float, default=None, help="Target KL divergence value (default: loads from ppg_config.py)")
     parser.add_argument("--clip-val", type=float, default=None, help="Value clipping range in PPG (default: loads from ppg_config.py)")
     parser.add_argument("--clip-eps", type=float, default=None, help="Policy clipping range in PPG (default: loads from ppg_config.py)")
+
+    # Adaptive reward — Lagrangian
+    _bool = lambda x: str(x).lower() == "true"
+    parser.add_argument("--lagrangian-enabled", type=_bool, default=None, help="Bật Lagrangian adaptive weighting (true/false)")
+    parser.add_argument("--lambda-safety-init", type=float, default=None, help="λ khởi tạo cho cost an toàn")
+    parser.add_argument("--lambda-comfort-init", type=float, default=None, help="λ khởi tạo cho cost êm ái")
+    parser.add_argument("--lambda-redlight-init", type=float, default=None, help="λ khởi tạo cho cost vượt đèn đỏ")
+    parser.add_argument("--lambda-lr", type=float, default=None, help="Learning rate dual ascent của λ")
+    parser.add_argument("--cost-limit-safety", type=float, default=None, help="Ngưỡng cost an toàn trung bình")
+    parser.add_argument("--cost-limit-comfort", type=float, default=None, help="Ngưỡng cost êm ái trung bình")
+    parser.add_argument("--cost-limit-redlight", type=float, default=None, help="Ngưỡng cost đèn đỏ trung bình")
+    parser.add_argument("--lambda-max", type=float, default=None, help="Chặn trên λ")
+    # Adaptive reward — Curriculum
+    parser.add_argument("--curriculum-enabled", type=_bool, default=None, help="Bật curriculum weighting (true/false)")
+    parser.add_argument("--curriculum-warmup", type=int, default=None, help="Số episode warmup curriculum")
+    parser.add_argument("--curriculum-energy-w-start", type=float, default=None, help="|W_ENERGY| đầu training")
+    parser.add_argument("--curriculum-energy-w-end", type=float, default=None, help="|W_ENERGY| cuối training")
 
     # Backbone hyperparameters (Mamba)
     parser.add_argument("--d-model", type=int, default=128, help="Feature dimension (default: 128)")
@@ -214,6 +232,17 @@ def train(args):
     state_dim = env.observation_space.shape[0]   # 45
     action_dim = env.action_space.shape[0]       # 2
 
+    # --- Adaptive reward wiring: resolve enabled flags (CLI → YAML → ppg_config) ---
+    import ppg.ppg_config as _cfg
+    _lag_enabled = args.lagrangian_enabled if args.lagrangian_enabled is not None else _cfg.LAGRANGIAN_ENABLED
+    _cur_enabled = args.curriculum_enabled if args.curriculum_enabled is not None else _cfg.CURRICULUM_ENABLED
+
+    env.adaptive_reward_enabled = _lag_enabled
+    env.curriculum_enabled = _cur_enabled
+    env.curriculum_warmup = args.curriculum_warmup if args.curriculum_warmup is not None else _cfg.CURRICULUM_WARMUP_EPISODES
+    env.curriculum_energy_w_start = args.curriculum_energy_w_start if args.curriculum_energy_w_start is not None else _cfg.CURRICULUM_ENERGY_W_START
+    env.curriculum_energy_w_end = args.curriculum_energy_w_end if args.curriculum_energy_w_end is not None else _cfg.CURRICULUM_ENERGY_W_END
+
     # Backbone kwargs
     backbone_kwargs = get_backbone_kwargs(args)
     backbone_kwargs.pop("d_model", None)  # Prevent duplicate parameter error in PPGAgent
@@ -251,6 +280,16 @@ def train(args):
         d_targ=args.d_targ,
         clip_val=args.clip_val,
         clip_eps=args.clip_eps,
+        # Adaptive reward — Lagrangian
+        lagrangian_enabled=args.lagrangian_enabled,
+        lambda_safety_init=args.lambda_safety_init,
+        lambda_comfort_init=args.lambda_comfort_init,
+        lambda_redlight_init=args.lambda_redlight_init,
+        lambda_lr=args.lambda_lr,
+        cost_limit_safety=args.cost_limit_safety,
+        cost_limit_comfort=args.cost_limit_comfort,
+        cost_limit_redlight=args.cost_limit_redlight,
+        lambda_max=args.lambda_max,
         **backbone_kwargs,
     )
 
@@ -283,12 +322,17 @@ def train(args):
     t_updates = 0
     start_time = time.time()
     max_action = 1.0
+    # Lagrangian λ gần nhất để log ra CSV (0.0 khi chưa update hoặc tắt)
+    last_lambda_safety = 0.0
+    last_lambda_comfort = 0.0
+    last_lambda_redlight = 0.0
 
     try:
         for i_episode in range(1, args.n_episode + 1):
             result = env.reset()
             state = result[0] if isinstance(result, tuple) else result
             agent.reset_history(state)
+            env.set_episode(global_ep_cnt + 1)  # curriculum biết tiến độ
             done = False
 
             ep_reward = 0.0
@@ -319,15 +363,36 @@ def train(args):
 
                 agent.save_eps(
                     state.tolist(), action.tolist(), reward, float(done),
-                    next_state.tolist(), log_prob, value, value_val
+                    next_state.tolist(), log_prob, value, value_val,
+                    cost_safety=info.get("cost_safety", 0.0),
+                    cost_comfort=info.get("cost_comfort", 0.0),
+                    cost_redlight=info.get("cost_redlight", 0.0),
                 )
 
                 state = next_state
 
                 # PPG Update
                 if t_updates == n_update_val:
+                    # update() tính returns bằng λ HIỆN TẠI (của rollout này) rồi
+                    # trả mean cost trước khi clear_memory.
                     update_results = agent.update()
                     t_updates = 0
+                    # Dual ascent: dịch λ cho rollout KẾ TIẾP (chuẩn PPO-Lagrangian)
+                    if getattr(agent, "lagrangian_enabled", False):
+                        lam_info = agent.update_lambdas(
+                            update_results.get("mean_cost_safety", 0.0),
+                            update_results.get("mean_cost_comfort", 0.0),
+                            update_results.get("mean_cost_redlight", 0.0),
+                        )
+                        last_lambda_safety = lam_info["lambda_safety"]
+                        last_lambda_comfort = lam_info["lambda_comfort"]
+                        last_lambda_redlight = lam_info["lambda_redlight"]
+                        print(f"  [LAGRANGIAN] λ_s={lam_info['lambda_safety']:.4f}"
+                              f"(c={lam_info['mean_cost_safety']:.4f}) | "
+                              f"λ_c={lam_info['lambda_comfort']:.4f}"
+                              f"(c={lam_info['mean_cost_comfort']:.4f}) | "
+                              f"λ_r={lam_info['lambda_redlight']:.4f}"
+                              f"(c={lam_info['mean_cost_redlight']:.4f})")
                     if update_results and update_results.get("aux_executed"):
                         print(f"  [AUX PHASE] Executed auxiliary phase update. Loss: {update_results['aux_loss']:.4f}")
 
@@ -350,7 +415,9 @@ def train(args):
                 f"{ep_reward:.2f}", f"{avg_speed:.2f}", f"{ep_energy:.2f}",
                 f"{avg_jerk:.4f}", f"{avg_safety:.4f}",
                 success, reason, route_str,
-                f"{override_rate:.4f}", f"{avg_physical_jerk:.4f}"
+                f"{override_rate:.4f}", f"{avg_physical_jerk:.4f}",
+                f"{last_lambda_safety:.4f}", f"{last_lambda_comfort:.4f}",
+                f"{last_lambda_redlight:.4f}"
             ]
             log_episode(csv_path, row)
 
