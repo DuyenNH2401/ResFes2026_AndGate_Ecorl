@@ -60,3 +60,30 @@ python train_ppg.py --backbone mamba --exp-name combined \
 - λ dao động mạnh → giảm `--lambda-lr` (vd 0.005); λ phản ứng chậm → tăng (vd 0.02).
 - `red_light`: baseline phạt rất nặng (W=-25). λ_redlight khởi tạo 25.0 để xuất phát
   gần baseline; `cost_limit_redlight=0` ép về 0 vi phạm.
+
+## Visualize kết quả train (sau khi train xong các arm)
+
+`visualize_training.py` đọc các `training_log.csv` và vẽ learning curve so sánh,
+gộp nhiều seed thành mean ± dải tin cậy.
+
+```bash
+# Tự động quét mọi run dưới *_PPG/runs/, gộp theo exp_name + gộp seed
+python visualize_training.py --out plots/
+
+# Chỉ định nhóm thủ công (nhãn = glob), so sánh các thuật toán
+python visualize_training.py \
+    --runs "PPO=PPO_PPG/runs/ppo_*/training_log.csv" \
+    --runs "PPG-Mamba=Mamba_PPG/runs/ppg_*/training_log.csv" \
+    --runs "PPG-Lagrange=Mamba_PPG/runs/lagrangian_*/training_log.csv" \
+    --band ci --smooth 20 --out plots/
+```
+
+Xuất ra `plots/`:
+- `curve_<metric>.png` — ep_reward, total_energy, avg_speed, safety, avg_jerk, override_rate
+  (mỗi thuật toán 1 đường + dải 95% CI / min–max giữa các seed).
+- `success_rate.png` — bar chart tỉ lệ success (± std giữa seed).
+- `curve_lambda_*.png` — tiến hoá λ (chỉ arm Lagrangian).
+- `summary_table.csv` — bảng tóm tắt mean ± std (trung bình 50 episode cuối) cho paper.
+
+Tuỳ chọn: `--band range` (min–max thay vì CI), `--smooth 1` (tắt làm mượt),
+`--max-episode E` (cắt trục x), `--metrics col1 col2 ...` (chọn cột tự do).
