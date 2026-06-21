@@ -1,0 +1,40 @@
+# PPG Hyperparameters
+ppg:
+  entropy_coef: 0.005
+  vf_loss_coef: 0.25
+  batchsize: 256
+  ppo_epochs: 10
+  n_update: 2048
+  gamma: 0.99
+  lam: 0.95
+  lr: 0.0003
+  use_history: "auto"
+  
+  # PPG specific
+  lr_policy: 0.0003
+  lr_value: 0.001
+  n_aux: 5
+  k_aux: 10
+  beta_kl: 5.0
+  d_targ: 0.03
+  clip_val: 10.0
+  clip_eps: 0.2
+
+
+# Backbone Hyperparameters
+backbone:
+  d_model: 128
+  hidden_size: 128
+  hidden_sizes: [256, 256]
+  num_layers: 2
+  seq_len: 5
+  dropout: 0.1
+  d_state: 16
+  d_conv: 4
+  n_layers: 2
+
+# Training Control
+training:
+  n_episode: 5000
+  n_saved: 100
+  render: "false"
