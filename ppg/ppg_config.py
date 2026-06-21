@@ -1,5 +1,8 @@
 # ppg_config.py - Default configurations for Phasic Policy Gradient (PPG)
 
+# Reproducibility
+SEED = 55             # Random seed mặc định (python/numpy/torch/cuda + SUMO)
+
 # PPO / Policy Phase Hyperparameters
 ENTROPY_COEF = 0.005  # c2 coefficient
 VF_LOSS_COEF = 0.25   # c1 coefficient for auxiliary critic head in policy model

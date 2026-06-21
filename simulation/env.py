@@ -59,6 +59,8 @@ class SumoEnv(gym.Env):
         self.curriculum_energy_w_start = 0.0
         self.curriculum_energy_w_end = 0.01197655138923567
         self.current_episode = 0
+        # Seed cho SUMO (reproducibility). None → SUMO tự chọn ngẫu nhiên.
+        self.sim_seed = None
 
         self.maps = [map_config] if isinstance(map_config, str) else map_config
         self.imperfection = imperfection
@@ -998,6 +1000,24 @@ class SumoEnv(gym.Env):
         """Train loop gọi đầu mỗi episode để curriculum biết tiến độ."""
         self.current_episode = int(ep)
 
+    def _build_sumo_cmd(self, sumo_binary, active_map, route_arg):
+        """Dựng lệnh khởi động SUMO. Thêm --seed khi self.sim_seed được set
+        (reproducibility traffic giữa các lần chạy cùng seed)."""
+        cmd = [sumo_binary, "-c", active_map] + list(route_arg) + [
+            "--start", "--quit-on-end",
+            "--device.emissions.probability", "1.0",
+            "--scale", str(self.TRAFFIC_SCALE),
+            "--delay", str(self.delay),
+            "--no-step-log", "true",
+            "--time-to-teleport", "-1",
+            "--collision.action", "remove",
+            "--collision.check-junctions", "true",
+            "--no-warnings", "true",
+        ]
+        if getattr(self, "sim_seed", None) is not None:
+            cmd += ["--seed", str(int(self.sim_seed))]
+        return cmd
+
     def _curriculum_energy_weight(self):
         """|W_ENERGY| hiệu dụng theo curriculum. Trả về giá trị DƯƠNG (độ lớn).
         Khi curriculum tắt → trả end (= giá trị gốc) → backward-compatible."""
@@ -1038,16 +1058,7 @@ class SumoEnv(gym.Env):
         self._prev_was_in_junction = False
 
         SumoBinary = "sumo-gui" if self.render_mode else "sumo"
-        SumoCMD = [SumoBinary, "-c", active_map] + route_arg + \
-                ["--start", "--quit-on-end",
-                "--device.emissions.probability", "1.0",
-                "--scale", str(self.TRAFFIC_SCALE),
-                "--delay", str(self.delay),
-                "--no-step-log", "true",
-                "--time-to-teleport", "-1",
-                "--collision.action", "remove",
-                "--collision.check-junctions", "true",
-                "--no-warnings", "true"]
+        SumoCMD = self._build_sumo_cmd(SumoBinary, active_map, route_arg)
 
         traci.start(SumoCMD)
         self._success = False

@@ -47,6 +47,9 @@ def set_seed(seed=55):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+    # Deterministic cuDNN cho reproducibility (chậm hơn chút nhưng tái lập được)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 # ============================================================
@@ -122,7 +125,7 @@ Examples:
     parser.add_argument("--n-layers", type=int, default=2, help="Mamba number of blocks (default: 2)")
 
     # Training control
-    parser.add_argument("--seed", type=int, default=55, help="Random seed (default: 55)")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed (default: loads from config/ppg_config.py = 55)")
     parser.add_argument("--exp-name", type=str, default="run", help="Experiment name for logging (default: run)")
     parser.add_argument("--n-episode", type=int, default=5000, help="Total episodes (default: 5000)")
     parser.add_argument("--n-saved", type=int, default=100, help="Checkpoint interval (default: 100)")
@@ -202,6 +205,10 @@ def log_episode(filepath, row):
 #  TRAINING LOOP
 # ============================================================
 def train(args):
+    import ppg.ppg_config as _seed_cfg
+    # Seed 3-lớp: CLI → YAML (set_defaults) → ppg_config.SEED
+    if args.seed is None:
+        args.seed = _seed_cfg.SEED
     set_seed(args.seed)
     backbone_name = args.backbone.lower()
     backbone_upper = "Mamba"
@@ -239,6 +246,7 @@ def train(args):
 
     env.adaptive_reward_enabled = _lag_enabled
     env.curriculum_enabled = _cur_enabled
+    env.sim_seed = args.seed  # reproducibility traffic SUMO
     env.curriculum_warmup = args.curriculum_warmup if args.curriculum_warmup is not None else _cfg.CURRICULUM_WARMUP_EPISODES
     env.curriculum_energy_w_start = args.curriculum_energy_w_start if args.curriculum_energy_w_start is not None else _cfg.CURRICULUM_ENERGY_W_START
     env.curriculum_energy_w_end = args.curriculum_energy_w_end if args.curriculum_energy_w_end is not None else _cfg.CURRICULUM_ENERGY_W_END
