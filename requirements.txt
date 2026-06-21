@@ -2,8 +2,8 @@
 # ecorl_adaptive_shaping — Dependencies
 # =============================================================================
 # Core RL & simulation
-torch>=2.0.0                     # PyTorch — neural networks & optimizers (training, inference)
-numpy<2.0.0                      # Numerical computing (guard against numpy 2.x breaking changes)
+torch                    # PyTorch — neural networks & optimizers (training, inference)
+numpy                   # Numerical computing (guard against numpy 2.x breaking changes)
 gymnasium>=0.28.0                # Gymnasium API (replaces gym)
 
 # SUMO traffic simulation interface
