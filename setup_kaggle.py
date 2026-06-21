@@ -45,15 +45,15 @@ def setup_python_deps():
     print("2/3  Installing Python dependencies...")
     print("=" * 60)
 
-    # Pin only critical versions; let pip resolve the rest.
+    # No version pins — Kaggle's base env is recent enough.
     deps = [
-        "torch>=2.0.0",
+        "torch",
         "numpy",
-        "gymnasium>=0.28.0",
+        "gymnasium",
         "traci",
-        "pyyaml>=6.0",
-        "pandas>=1.5.0",
-        "matplotlib>=3.6.0",
+        "pyyaml",
+        "pandas",
+        "matplotlib",
     ]
 
     # Check if torch is already installed (Kaggle usually has it)
