@@ -1,0 +1,20 @@
+# =============================================================================
+# ecorl_adaptive_shaping — Dependencies
+# =============================================================================
+# Core RL & simulation
+torch>=2.0.0                     # PyTorch — neural networks & optimizers (training, inference)
+numpy<2.0.0                      # Numerical computing (guard against numpy 2.x breaking changes)
+gymnasium>=0.28.0                # Gymnasium API (replaces gym)
+
+# SUMO traffic simulation interface
+# NOTE: SUMO itself (traci + libsumo) must be installed separately:
+#   pip install eclipse-sumo
+# or install from source: https://sumo.dlr.de/docs/Installing.html
+traci                           # Traffic Control Interface for SUMO
+
+# Config & utilities
+pyyaml>=6.0                     # YAML config file parsing
+
+# Visualization (training curves)
+pandas>=1.5.0                   # CSV log loading & manipulation
+matplotlib>=3.6.0               # Plotting
