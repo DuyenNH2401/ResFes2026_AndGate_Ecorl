@@ -50,6 +50,16 @@ class SumoEnv(gym.Env):
         self.RSS_DELTA = 0.5                  # s — Thời gian phản ứng
         self.RSS_D_MIN = 2.5                  # m — Khoảng cách an toàn tối thiểu khi dừng hẳn
 
+        # --- ADAPTIVE REWARD ---
+        # Lagrangian: mặc định TẮT để giữ baseline (reward gốc không đổi).
+        self.adaptive_reward_enabled = False
+        # Curriculum weighting theo episode — mặc định TẮT.
+        self.curriculum_enabled = False
+        self.curriculum_warmup = 1000
+        self.curriculum_energy_w_start = 0.0
+        self.curriculum_energy_w_end = 0.01197655138923567
+        self.current_episode = 0
+
         self.maps = [map_config] if isinstance(map_config, str) else map_config
         self.imperfection = imperfection
         self.impatience = impatience
@@ -944,16 +954,35 @@ class SumoEnv(gym.Env):
         red_light_penalty   = np.nan_to_num(red_light_penalty)
         junction_penalty    = np.nan_to_num(junction_penalty)
 
-        return (r_speed_target      * W_SPEED_TARGET)  + \
-               (r_too_slow          * W_TOO_SLOW)      + \
-               (progress_reward     * W_PROGRESS)      + \
-               (energy_penalty      * W_ENERGY)        + \
-               (accel_jerk          * W_COMFORT)       + \
-               (lane_change_penalty * W_LANE_CHANGE)   + \
-               (safety_penalty      * W_SAFETY)        + \
-               (red_light_penalty   * W_RED_LIGHT)     + \
-               (junction_penalty    * W_JUNCTION)      + \
-               W_TIME
+        # ------------------------------------------------------------------ #
+        #  TỔNG HỢP — tách reward_task và các cost bị ràng buộc (Lagrangian) #
+        # ------------------------------------------------------------------ #
+        reward_task = (
+            (r_speed_target      * W_SPEED_TARGET)  +
+            (r_too_slow          * W_TOO_SLOW)      +
+            (progress_reward     * W_PROGRESS)      +
+            (energy_penalty      * W_ENERGY)        +
+            (lane_change_penalty * W_LANE_CHANGE)   +
+            (junction_penalty    * W_JUNCTION)      +
+            W_TIME
+        )
+
+        # Cost ≥ 0 (sẽ bị trừ λ·cost ở tầng agent). Mỗi cost là đại lượng THÔ
+        # (chưa nhân trọng số) để λ tương ứng tự học mức phạt.
+        cost_safety   = float(safety_penalty)
+        cost_comfort  = float(accel_jerk)
+        cost_redlight = float(red_light_penalty)
+
+        if getattr(self, "adaptive_reward_enabled", False):
+            return float(reward_task), cost_safety, cost_comfort, cost_redlight
+
+        # Backward-compatible: scalar y HỆT công thức gốc (9 thành phần + W_TIME)
+        return (
+            reward_task
+            + (accel_jerk        * W_COMFORT)
+            + (safety_penalty    * W_SAFETY)
+            + (red_light_penalty * W_RED_LIGHT)
+        )
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed, options=options)
