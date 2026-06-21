@@ -12,12 +12,12 @@ import subprocess
 import sys
 import os
 
-def run(cmd, hide_output=False):
-    """Run a shell command and optionally hide stdout."""
-    if hide_output:
+def run(cmd, hide_output=False, check=True):
+    """Run a shell command."""
+    if hide_output and check:
         subprocess.run(cmd, shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     else:
-        subprocess.run(cmd, shell=True, check=True)
+        subprocess.run(cmd, shell=True, check=check)
 
 
 def setup_sumo():
@@ -45,9 +45,10 @@ def setup_python_deps():
     print("2/3  Installing Python dependencies...")
     print("=" * 60)
 
+    # Pin only critical versions; let pip resolve the rest.
     deps = [
         "torch>=2.0.0",
-        "numpy<2.0.0",
+        "numpy",
         "gymnasium>=0.28.0",
         "traci",
         "pyyaml>=6.0",
@@ -64,10 +65,24 @@ def setup_python_deps():
         pass
 
     if deps:
+        print(f"  Installing: {' '.join(deps)}")
         pip_cmd = f"{sys.executable} -m pip install {' '.join(deps)} -q"
-        run(pip_cmd, hide_output=True)
-        for dep in deps:
-            print(f"  ✓ {dep}")
+        # Show stderr so we can debug if something goes wrong
+        result = subprocess.run(
+            pip_cmd, shell=True, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print("  ⚠ pip install failed — trying one-by-one...")
+            for dep in deps:
+                retry_cmd = f"{sys.executable} -m pip install {dep} -q"
+                ret = subprocess.run(retry_cmd, shell=True, capture_output=True, text=True)
+                if ret.returncode == 0:
+                    print(f"  ✓ {dep}")
+                else:
+                    print(f"  ✗ {dep}: {ret.stderr.strip()}")
+        else:
+            for dep in deps:
+                print(f"  ✓ {dep}")
     else:
         print("  All dependencies already installed.")
 
