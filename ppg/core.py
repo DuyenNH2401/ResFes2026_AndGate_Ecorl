@@ -152,6 +152,11 @@ class PPGAgent:
                  lr_policy=None, lr_value=None,
                  beta_kl=None, d_targ=None,
                  n_aux=None, k_aux=None, clip_val=None, clip_eps=None,
+                 # Lagrangian adaptive weighting
+                 lagrangian_enabled=None, lambda_safety_init=None,
+                 lambda_comfort_init=None, lambda_redlight_init=None,
+                 lambda_lr=None, cost_limit_safety=None, cost_limit_comfort=None,
+                 cost_limit_redlight=None, lambda_max=None,
                  **backbone_kwargs):
 
         self.backbone_name = backbone_name
@@ -179,6 +184,17 @@ class PPGAgent:
         self.K_aux = k_aux if k_aux is not None else ppg_config.K_AUX
         self.clip_val = clip_val if clip_val is not None else ppg_config.CLIP_VAL
         self.clip_eps = clip_eps if clip_eps is not None else getattr(ppg_config, 'CLIP_EPS', 0.2)
+
+        # Lagrangian adaptive weighting (an toàn + êm ái + đèn đỏ là ràng buộc)
+        self.lagrangian_enabled = lagrangian_enabled if lagrangian_enabled is not None else ppg_config.LAGRANGIAN_ENABLED
+        self.lambda_safety = lambda_safety_init if lambda_safety_init is not None else ppg_config.LAMBDA_SAFETY_INIT
+        self.lambda_comfort = lambda_comfort_init if lambda_comfort_init is not None else ppg_config.LAMBDA_COMFORT_INIT
+        self.lambda_redlight = lambda_redlight_init if lambda_redlight_init is not None else ppg_config.LAMBDA_REDLIGHT_INIT
+        self.lambda_lr = lambda_lr if lambda_lr is not None else ppg_config.LAMBDA_LR
+        self.cost_limit_safety = cost_limit_safety if cost_limit_safety is not None else ppg_config.COST_LIMIT_SAFETY
+        self.cost_limit_comfort = cost_limit_comfort if cost_limit_comfort is not None else ppg_config.COST_LIMIT_COMFORT
+        self.cost_limit_redlight = cost_limit_redlight if cost_limit_redlight is not None else ppg_config.COST_LIMIT_REDLIGHT
+        self.lambda_max = lambda_max if lambda_max is not None else ppg_config.LAMBDA_MAX
 
         # Setup history sequential wrapping matching PPO Agent
         self.history = []
@@ -271,21 +287,50 @@ class PPGAgent:
             v_value.squeeze(0).detach().cpu().item(),
         )
 
-    def save_eps(self, state, action, reward, done, next_state, log_prob, value, value_val):
+    def save_eps(self, state, action, reward, done, next_state, log_prob, value, value_val,
+                 cost_safety=0.0, cost_comfort=0.0, cost_redlight=0.0):
         """Saves a transition step to rollout memory."""
         if self.is_sequential:
             stacked_state = np.concatenate(self.history, axis=0).tolist()
-            
+
             next_history = self.history[1:] + [np.array(next_state, dtype=np.float32).copy()]
             stacked_next_state = np.concatenate(next_history, axis=0).tolist()
-            
+
             self.policy_memory.save_eps(
-                stacked_state, action, reward, done, stacked_next_state, log_prob, value, value_val
+                stacked_state, action, reward, done, stacked_next_state, log_prob, value, value_val,
+                cost_safety=cost_safety, cost_comfort=cost_comfort, cost_redlight=cost_redlight
             )
         else:
             self.policy_memory.save_eps(
-                state, action, reward, done, next_state, log_prob, value, value_val
+                state, action, reward, done, next_state, log_prob, value, value_val,
+                cost_safety=cost_safety, cost_comfort=cost_comfort, cost_redlight=cost_redlight
             )
+
+    def update_lambdas(self, mean_cost_safety, mean_cost_comfort, mean_cost_redlight):
+        """Dual gradient ascent cho hệ số Lagrangian λ.
+
+        λ ← clamp(λ + lr · (mean_cost − limit), 0, λ_max).
+        Nhận mean cost của rollout VỪA THU (đã tính trong update() trước khi
+        clear_memory). λ mới sẽ áp cho rollout KẾ TIẾP — đúng chuẩn PPO-Lagrangian.
+        """
+        self.lambda_safety = float(np.clip(
+            self.lambda_safety + self.lambda_lr * (mean_cost_safety - self.cost_limit_safety),
+            0.0, self.lambda_max))
+        self.lambda_comfort = float(np.clip(
+            self.lambda_comfort + self.lambda_lr * (mean_cost_comfort - self.cost_limit_comfort),
+            0.0, self.lambda_max))
+        self.lambda_redlight = float(np.clip(
+            self.lambda_redlight + self.lambda_lr * (mean_cost_redlight - self.cost_limit_redlight),
+            0.0, self.lambda_max))
+
+        return {
+            "lambda_safety": self.lambda_safety,
+            "lambda_comfort": self.lambda_comfort,
+            "lambda_redlight": self.lambda_redlight,
+            "mean_cost_safety": float(mean_cost_safety),
+            "mean_cost_comfort": float(mean_cost_comfort),
+            "mean_cost_redlight": float(mean_cost_redlight),
+        }
 
     def compute_gae(self, last_value_val):
         """
@@ -293,6 +338,19 @@ class PPGAgent:
         Computes advantages and return targets based on the separate Value Network estimates.
         """
         rewards = np.array(self.policy_memory.rewards, dtype=np.float32)
+
+        # Lagrangian: reward hiệu dụng r_eff = r − λ_s·c_s − λ_c·c_c − λ_r·c_r.
+        # Dùng λ HIỆN TẠI = λ của rollout này (cập nhật λ diễn ra SAU update()).
+        if getattr(self, "lagrangian_enabled", False):
+            cs = np.array(self.policy_memory.cost_safety, dtype=np.float32)
+            cc = np.array(self.policy_memory.cost_comfort, dtype=np.float32)
+            cr = np.array(self.policy_memory.cost_redlight, dtype=np.float32)
+            if cs.size == rewards.size and cc.size == rewards.size and cr.size == rewards.size:
+                rewards = (rewards
+                           - self.lambda_safety * cs
+                           - self.lambda_comfort * cc
+                           - self.lambda_redlight * cr)
+
         dones = np.array(self.policy_memory.dones, dtype=np.float32)
         value_vals = np.array(self.policy_memory.value_vals, dtype=np.float32)
         N = len(rewards)
@@ -430,6 +488,20 @@ class PPGAgent:
             aux_loss_val = self.update_auxiliary_phase()
             aux_executed = True
 
+        # Mean cost của rollout này — đọc TRƯỚC clear_memory để train loop
+        # cập nhật λ cho rollout kế tiếp (chuẩn PPO-Lagrangian).
+        mean_cost_safety = mean_cost_comfort = mean_cost_redlight = 0.0
+        if getattr(self, "lagrangian_enabled", False):
+            cs = self.policy_memory.cost_safety
+            cc = self.policy_memory.cost_comfort
+            cr = self.policy_memory.cost_redlight
+            if len(cs) > 0:
+                mean_cost_safety = float(np.mean(cs))
+            if len(cc) > 0:
+                mean_cost_comfort = float(np.mean(cc))
+            if len(cr) > 0:
+                mean_cost_redlight = float(np.mean(cr))
+
         self.policy_memory.clear_memory()
 
         return {
@@ -437,7 +509,10 @@ class PPGAgent:
             "value_loss": np.mean(value_losses),
             "entropy": np.mean(entropy_losses),
             "aux_executed": aux_executed,
-            "aux_loss": aux_loss_val
+            "aux_loss": aux_loss_val,
+            "mean_cost_safety": mean_cost_safety,
+            "mean_cost_comfort": mean_cost_comfort,
+            "mean_cost_redlight": mean_cost_redlight,
         }
 
     def update_auxiliary_phase(self):

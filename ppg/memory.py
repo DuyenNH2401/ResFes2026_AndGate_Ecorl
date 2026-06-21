@@ -32,6 +32,10 @@ class PPGMemory(Dataset):
         self.returns = []
         self.old_values = []
         self.old_value_vals = []
+        # Lagrangian cost (raw, ≥0). Mặc định rỗng; chỉ dùng khi lagrangian bật.
+        self.cost_safety = []
+        self.cost_comfort = []
+        self.cost_redlight = []
 
     def __len__(self):
         return len(self.dones)
@@ -50,7 +54,8 @@ class PPGMemory(Dataset):
             np.array([self.old_value_vals[idx]], dtype=np.float32),
         )
 
-    def save_eps(self, state, action, reward, done, next_state, log_prob, value, value_val):
+    def save_eps(self, state, action, reward, done, next_state, log_prob, value, value_val,
+                 cost_safety=0.0, cost_comfort=0.0, cost_redlight=0.0):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
@@ -59,6 +64,9 @@ class PPGMemory(Dataset):
         self.log_probs.append(log_prob)
         self.values.append(value)
         self.value_vals.append(value_val)
+        self.cost_safety.append(cost_safety)
+        self.cost_comfort.append(cost_comfort)
+        self.cost_redlight.append(cost_redlight)
 
     def clear_memory(self):
         del self.states[:]
@@ -73,6 +81,9 @@ class PPGMemory(Dataset):
         del self.returns[:]
         del self.old_values[:]
         del self.old_value_vals[:]
+        del self.cost_safety[:]
+        del self.cost_comfort[:]
+        del self.cost_redlight[:]
 
 
 class AuxiliaryBuffer:

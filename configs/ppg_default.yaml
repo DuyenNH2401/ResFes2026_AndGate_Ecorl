@@ -35,3 +35,19 @@ training:
   n_episode: 5000
   n_saved: 100
   render: "false"
+
+# Adaptive Reward (mặc định TẮT — chạy baseline reward gốc)
+adaptive_reward:
+  lagrangian_enabled: false
+  lambda_safety_init: 1.0
+  lambda_comfort_init: 0.1
+  lambda_redlight_init: 25.0
+  lambda_lr: 0.01
+  cost_limit_safety: 0.02
+  cost_limit_comfort: 0.30
+  cost_limit_redlight: 0.0
+  lambda_max: 50.0
+  curriculum_enabled: false
+  curriculum_warmup: 1000
+  curriculum_energy_w_start: 0.0
+  curriculum_energy_w_end: 0.01197655138923567
