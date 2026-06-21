@@ -785,7 +785,7 @@ class SumoEnv(gym.Env):
         W_SPEED_TARGET  =  0.3
         W_TOO_SLOW      = -0.1
         W_PROGRESS      =  0.18692291992838891
-        W_ENERGY        = -0.01197655138923567
+        W_ENERGY        = -self._curriculum_energy_weight()  # curriculum tắt → -0.01197655138923567 (gốc)
         W_COMFORT       = -0.0287413370864677
         W_LANE_CHANGE   = -0.1
         W_SAFETY        = -0.019335217679737792
@@ -993,6 +993,21 @@ class SumoEnv(gym.Env):
             return (float(reward_task), float(cost_safety),
                     float(cost_comfort), float(cost_redlight))
         return float(reward_out), 0.0, 0.0, 0.0
+
+    def set_episode(self, ep):
+        """Train loop gọi đầu mỗi episode để curriculum biết tiến độ."""
+        self.current_episode = int(ep)
+
+    def _curriculum_energy_weight(self):
+        """|W_ENERGY| hiệu dụng theo curriculum. Trả về giá trị DƯƠNG (độ lớn).
+        Khi curriculum tắt → trả end (= giá trị gốc) → backward-compatible."""
+        if not getattr(self, "curriculum_enabled", False):
+            return self.curriculum_energy_w_end
+        warmup = max(1, self.curriculum_warmup)
+        frac = min(1.0, self.current_episode / warmup)
+        start = self.curriculum_energy_w_start
+        end = self.curriculum_energy_w_end
+        return start + frac * (end - start)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed, options=options)

@@ -23,6 +23,12 @@ def _make_stub_env(adaptive: bool):
     env.JUNCTION_TARGET_SPEED = 2.0
     env.JUNCTION_MIN_SPEED = 0.0
     env.adaptive_reward_enabled = adaptive
+    # Curriculum mặc định TẮT → _curriculum_energy_weight trả end (= W_ENERGY gốc)
+    env.curriculum_enabled = False
+    env.curriculum_warmup = 1000
+    env.curriculum_energy_w_start = 0.0
+    env.curriculum_energy_w_end = 0.01197655138923567
+    env.current_episode = 0
     # veh_data giả: xe chạy thẳng, không leader, không TLS
     env.veh_data = {
         "speed": 10.0,
@@ -198,5 +204,37 @@ def test_compute_gae_no_subtract_when_disabled():
     adv, ret = agent.compute_gae(0.0)
     # returns không bị ảnh hưởng bởi cost khi tắt → return[1] = reward[1] = 1.0
     assert abs(ret[1] - 1.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+#  Task 5 — Curriculum energy weighting
+# ---------------------------------------------------------------------------
+def test_curriculum_energy_weight_ramps():
+    env = _make_stub_env(adaptive=False)
+    env.curriculum_enabled = True
+    env.curriculum_warmup = 1000
+    env.curriculum_energy_w_start = 0.0
+    env.curriculum_energy_w_end = 0.012
+
+    env.current_episode = 0
+    assert abs(env._curriculum_energy_weight() - 0.0) < 1e-9
+    env.current_episode = 500
+    assert abs(env._curriculum_energy_weight() - 0.006) < 1e-6
+    env.current_episode = 5000  # quá warmup → clamp tại end
+    assert abs(env._curriculum_energy_weight() - 0.012) < 1e-9
+
+
+def test_curriculum_disabled_returns_base_weight():
+    env = _make_stub_env(adaptive=False)
+    env.curriculum_enabled = False
+    env.curriculum_energy_w_end = 0.012
+    assert abs(env._curriculum_energy_weight() - 0.012) < 1e-9
+
+
+def test_set_episode_updates_counter():
+    env = _make_stub_env(adaptive=False)
+    env.set_episode(42)
+    assert env.current_episode == 42
+
 
 
